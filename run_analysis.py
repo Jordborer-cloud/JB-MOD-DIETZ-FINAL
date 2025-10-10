@@ -47,6 +47,21 @@ def main():
         ]
     )
     
+    # Add 2025 data (up to end of June)
+    # Opening balance: 26,706,398
+    # Closing balance: 35,001,066
+    # Movements: -200,000 on 2025-05-15, +1,589,454 on 2025-05-25
+    calc.add_period(
+        year=2025,
+        start=26706398,
+        end=35001066,
+        movements=[
+            {'date': '2025-01-02', 'amount': 5091500},
+            {'date': '2025-05-15', 'amount': -200000},
+            {'date': '2025-05-25', 'amount': 1589454},
+        ]
+    )
+    
     # Print results to console
     print("\nModified Dietz Returns:")
     print("-" * 20)
@@ -56,8 +71,8 @@ def main():
     
     # Export to PDF
     try:
-        calc.export_pdf('results.pdf')
-        print("\nDetailed results exported to results.pdf")
+        calc.export_pdf('JB Mod Calc.pdf')
+        print("\nDetailed results exported to JB Mod Calc.pdf")
     except Exception as e:
         print(f"\nError exporting PDF: {str(e)}")
 

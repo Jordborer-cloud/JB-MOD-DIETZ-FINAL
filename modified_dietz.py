@@ -173,9 +173,9 @@ class ModifiedDietzCalculator:
         x = np.arange(len(years))
         width = 0.25
         
-        ax.bar(x - width, returns, width, label='Portfolio', color='royalblue')
-        ax.bar(x, benchmarks['AOR'], width, label='AOR ETF', color='lightcoral')
-        ax.bar(x + width, benchmarks['CPI'], width, label='CPI', color='lightgreen')
+        bars_portfolio = ax.bar(x - width, returns, width, label='Portfolio', color='royalblue')
+        bars_aor = ax.bar(x, benchmarks['AOR'], width, label='AOR ETF', color='lightcoral')
+        bars_cpi = ax.bar(x + width, benchmarks['CPI'], width, label='CPI', color='lightgreen')
         
         ax.set_title('Annual Returns Comparison')
         ax.set_xlabel('Year')
@@ -185,7 +185,21 @@ class ModifiedDietzCalculator:
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.1%}'.format(y)))
         ax.grid(True, alpha=0.3)
         ax.legend()
-        
+
+        # Add % labels to bars
+        def add_percent_labels(bars, values):
+            for bar, value in zip(bars, values):
+                height = bar.get_height()
+                ax.annotate(f'{value:.1%}',
+                            xy=(bar.get_x() + bar.get_width() / 2, height),
+                            xytext=(0, 3),  # 3 points vertical offset
+                            textcoords="offset points",
+                            ha='center', va='bottom', fontsize=8)
+
+        add_percent_labels(bars_portfolio, returns)
+        add_percent_labels(bars_aor, benchmarks['AOR'])
+        add_percent_labels(bars_cpi, benchmarks['CPI'])
+
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
             plt.savefig(tmp.name, format='png', dpi=300, bbox_inches='tight')
             plt.close()
