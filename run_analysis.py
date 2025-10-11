@@ -47,32 +47,30 @@ def main():
         ]
     )
     
-    # Add 2025 data (up to end of June)
-    # Opening balance: 26,706,398
-    # Closing balance: 35,001,066
-    # Movements: -200,000 on 2025-05-15, +1,589,454 on 2025-05-25
+
+    # Add 2025 data
     calc.add_period(
         year=2025,
-        start=26706398,
-        end=35001066,
+        start=26706398.00,
+        end=35001066.00,
         movements=[
-            {'date': '2025-01-02', 'amount': 5091500},
-            {'date': '2025-05-15', 'amount': -200000},
-            {'date': '2025-05-25', 'amount': 1589454},
+            {'date': '2025-01-02', 'amount': 5091500.00},
+            {'date': '2025-05-15', 'amount': -200000.00},
+            {'date': '2025-05-25', 'amount': 1589454.00}
         ]
     )
-    
+
     # Print results to console
     print("\nModified Dietz Returns:")
     print("-" * 20)
     for period in sorted(calc.periods, key=lambda x: x.year):
         print(f"Year {period.year}: {period.return_rate:.2%}")
     print(f"\nCumulative Return: {calc.calculate_cumulative():.2%}")
-    
+
     # Export to PDF
     try:
-        calc.export_pdf('JB Mod Calc.pdf')
-        print("\nDetailed results exported to JB Mod Calc.pdf")
+        calc.export_pdf('JB Mod Dietz Calc.pdf')
+        print("\nDetailed results exported to JB Mod Dietz Calc.pdf")
     except Exception as e:
         print(f"\nError exporting PDF: {str(e)}")
 

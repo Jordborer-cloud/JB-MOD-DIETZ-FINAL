@@ -56,20 +56,18 @@ class CPIDataFetcher:
 
 class ModifiedDietzCalculator:
     def __init__(self, fred_api_key: Optional[str] = None):
-        self.periods: List[Period] = []
+        self.periods = []
         self.cpi_fetcher = CPIDataFetcher(fred_api_key)
 
     def add_period(self, year: int, start: float, end: float, movements: List[Dict[str, Any]]) -> None:
         norm_movements = []
         year_start = date(year, 1, 1)
         year_end = date(year, 12, 31)
-        
         for m in movements:
             move_date = datetime.strptime(m['date'], '%Y-%m-%d').date()
             if move_date < year_start or move_date > year_end:
                 raise ValueError(f"Movement date {m['date']} not in year {year}")
             norm_movements.append({'date': m['date'], 'amount': float(m['amount'])})
-        
         period = Period(
             year=year,
             start_balance=float(start),
@@ -83,19 +81,15 @@ class ModifiedDietzCalculator:
         year_start = date(period.year, 1, 1)
         year_end = date(period.year, 12, 31)
         days_in_year = (year_end - year_start).days + 1
-
         weighted_flows = 0.0
         total_flows = 0.0
-        
         for m in period.movements:
             move_date = datetime.strptime(m['date'], '%Y-%m-%d').date()
             days_weight = (year_end - move_date).days / days_in_year
             weighted_flows += float(m['amount']) * days_weight
             total_flows += float(m['amount'])
-
         numerator = period.end_balance - period.start_balance - total_flows
         denominator = period.start_balance + weighted_flows
-
         if abs(denominator) < 1e-10:
             return 0.0
         return numerator / denominator
@@ -107,17 +101,12 @@ class ModifiedDietzCalculator:
         return cumulative - 1.0
 
     def _get_benchmarks(self) -> Dict[str, List[float]]:
-        """Get benchmark returns for comparison"""
         years = sorted(p.year for p in self.periods)
         start_year, end_year = min(years), max(years)
-        
-        # Get CPI data
         cpi_data = self.cpi_fetcher.get_cpi_returns(start_year, end_year)
         benchmarks = {
             'CPI': [cpi_data.get(year, 0.025) for year in years]
         }
-        
-        # Get AOR data
         try:
             start_date = f"{start_year}-01-01"
             end_date = f"{end_year}-12-31"
@@ -126,14 +115,119 @@ class ModifiedDietzCalculator:
                 aor_returns = aor['Adj Close'].pct_change().fillna(0)
                 benchmarks['AOR'] = aor_returns.values.tolist()
             else:
-                # Fallback data if AOR fetch fails
                 aor_rates = {2021: 0.102, 2022: -0.154, 2023: 0.142, 2024: 0.065}
                 benchmarks['AOR'] = [aor_rates.get(year, 0.07) for year in years]
         except Exception as e:
             print(f"Warning: Using fallback data for AOR benchmark: {e}")
             aor_rates = {2021: 0.102, 2022: -0.154, 2023: 0.142, 2024: 0.065}
             benchmarks['AOR'] = [aor_rates.get(year, 0.07) for year in years]
-        
+        return benchmarks
+        # Download USD/ZAR rates for each year-end
+        try:
+            fx_data = yf.download('ZAR=X', start=f"{years[0]}-01-01", end=f"{years[-1]+1}-01-10", interval='1d', progress=False)
+            fx_rates = []
+            for d in year_end_dates:
+                # If market closed on 31 Dec, get last available price before year-end
+                date_obj = pd.to_datetime(d)
+                if d in fx_data.index:
+                    fx_rates.append(float(fx_data.loc[d]['Close']))
+                else:
+                    # Find last available date before year-end
+                    prev_dates = fx_data.loc[fx_data.index <= date_obj]
+                    if not prev_dates.empty:
+                        fx_rates.append(float(prev_dates.iloc[-1]['Close']))
+                    else:
+                        fx_rates.append(np.nan)
+        except Exception as e:
+            print(f"Warning: Could not fetch USD/ZAR rates: {e}")
+            fx_rates = [np.nan] * len(years)
+
+        end_balances = [p.end_balance for p in sorted(self.periods, key=lambda x: x.year)]
+        zar_balances = [bal * rate if rate == rate else np.nan for bal, rate in zip(end_balances, fx_rates)]
+
+        fig, ax = plt.subplots()
+        ax.plot(years, zar_balances, marker='o', color='darkgreen', linewidth=2, label='Portfolio Value (ZAR)')
+        for i, val in enumerate(zar_balances):
+            if val == val:  # not nan
+                ax.annotate(f'R{val:,.0f}', xy=(years[i], val), xytext=(0, 8), textcoords="offset points", ha='center', va='bottom', fontsize=8, color='darkgreen')
+        ax.set_title('Portfolio Value in ZAR (Year-End)')
+        ax.set_xlabel('Year')
+        ax.set_ylabel('Portfolio Value (ZAR)')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            plt.savefig(tmp.name, format='png', dpi=300, bbox_inches='tight')
+            plt.close()
+            elements.append(Image(tmp.name, width=6*inch, height=4*inch))
+            elements.append(Spacer(1, 12))
+
+    def __init__(self, fred_api_key: Optional[str] = None):
+        self.periods = []
+        self.cpi_fetcher = CPIDataFetcher(fred_api_key)
+
+    def add_period(self, year: int, start: float, end: float, movements: List[Dict[str, Any]]) -> None:
+        norm_movements = []
+        year_start = date(year, 1, 1)
+        year_end = date(year, 12, 31)
+        for m in movements:
+            move_date = datetime.strptime(m['date'], '%Y-%m-%d').date()
+            if move_date < year_start or move_date > year_end:
+                raise ValueError(f"Movement date {m['date']} not in year {year}")
+            norm_movements.append({'date': m['date'], 'amount': float(m['amount'])})
+        period = Period(
+            year=year,
+            start_balance=float(start),
+            end_balance=float(end),
+            movements=norm_movements
+        )
+        period.return_rate = self._calculate_return(period)
+        self.periods.append(period)
+
+    def _calculate_return(self, period: Period) -> float:
+        year_start = date(period.year, 1, 1)
+        year_end = date(period.year, 12, 31)
+        days_in_year = (year_end - year_start).days + 1
+        weighted_flows = 0.0
+        total_flows = 0.0
+        for m in period.movements:
+            move_date = datetime.strptime(m['date'], '%Y-%m-%d').date()
+            days_weight = (year_end - move_date).days / days_in_year
+            weighted_flows += float(m['amount']) * days_weight
+            total_flows += float(m['amount'])
+        numerator = period.end_balance - period.start_balance - total_flows
+        denominator = period.start_balance + weighted_flows
+        if abs(denominator) < 1e-10:
+            return 0.0
+        return numerator / denominator
+
+    def calculate_cumulative(self) -> float:
+        cumulative = 1.0
+        for period in sorted(self.periods, key=lambda x: x.year):
+            cumulative *= (1.0 + period.return_rate)
+        return cumulative - 1.0
+
+    def _get_benchmarks(self) -> Dict[str, List[float]]:
+        years = sorted(p.year for p in self.periods)
+        start_year, end_year = min(years), max(years)
+        cpi_data = self.cpi_fetcher.get_cpi_returns(start_year, end_year)
+        benchmarks = {
+            'CPI': [cpi_data.get(year, 0.025) for year in years]
+        }
+        try:
+            start_date = f"{start_year}-01-01"
+            end_date = f"{end_year}-12-31"
+            aor = yf.download('AOR', start=start_date, end=end_date, interval='1y', progress=False)
+            if not aor.empty:
+                aor_returns = aor['Adj Close'].pct_change().fillna(0)
+                benchmarks['AOR'] = aor_returns.values.tolist()
+            else:
+                aor_rates = {2021: 0.102, 2022: -0.154, 2023: 0.142, 2024: 0.065}
+                benchmarks['AOR'] = [aor_rates.get(year, 0.07) for year in years]
+        except Exception as e:
+            print(f"Warning: Using fallback data for AOR benchmark: {e}")
+            aor_rates = {2021: 0.102, 2022: -0.154, 2023: 0.142, 2024: 0.065}
+            benchmarks['AOR'] = [aor_rates.get(year, 0.07) for year in years]
         return benchmarks
 
     def export_pdf(self, filename: str) -> None:
@@ -168,15 +262,25 @@ class ModifiedDietzCalculator:
         outperf_aor = cum_return - cum_aor
         outperf_cpi = cum_return - cum_cpi
 
-        # Figure 1: Annual Returns Comparison
+        # Figure 1: Annual Returns Comparison (with data labels)
         fig, ax = plt.subplots()
         x = np.arange(len(years))
         width = 0.25
-        
+
         bars_portfolio = ax.bar(x - width, returns, width, label='Portfolio', color='royalblue')
         bars_aor = ax.bar(x, benchmarks['AOR'], width, label='AOR ETF', color='lightcoral')
         bars_cpi = ax.bar(x + width, benchmarks['CPI'], width, label='CPI', color='lightgreen')
-        
+
+        # Add data labels
+        for bars in [bars_portfolio, bars_aor, bars_cpi]:
+            for bar in bars:
+                height = bar.get_height()
+                ax.annotate(f'{height:.2%}',
+                            xy=(bar.get_x() + bar.get_width() / 2, height),
+                            xytext=(0, 3),  # 3 points vertical offset
+                            textcoords="offset points",
+                            ha='center', va='bottom', fontsize=8)
+
         ax.set_title('Annual Returns Comparison')
         ax.set_xlabel('Year')
         ax.set_ylabel('Return (%)')
@@ -186,48 +290,61 @@ class ModifiedDietzCalculator:
         ax.grid(True, alpha=0.3)
         ax.legend()
 
-        # Add % labels to bars
-        def add_percent_labels(bars, values):
-            for bar, value in zip(bars, values):
-                height = bar.get_height()
-                ax.annotate(f'{value:.1%}',
-                            xy=(bar.get_x() + bar.get_width() / 2, height),
-                            xytext=(0, 3),  # 3 points vertical offset
-                            textcoords="offset points",
-                            ha='center', va='bottom', fontsize=8)
-
-        add_percent_labels(bars_portfolio, returns)
-        add_percent_labels(bars_aor, benchmarks['AOR'])
-        add_percent_labels(bars_cpi, benchmarks['CPI'])
-
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
             plt.savefig(tmp.name, format='png', dpi=300, bbox_inches='tight')
             plt.close()
             elements.append(Image(tmp.name, width=6*inch, height=4*inch))
             elements.append(Spacer(1, 12))
 
-        # Figure 2: Cumulative Growth
+
+        # Figure 2: Yearly Money Made/Lost (Nominal) with Cumulative Line, actual values
+        total_made_lost = []
+        cumulative_nominal = []
+        cum_sum = 0.0
+        for period in sorted(self.periods, key=lambda x: x.year):
+            net_flows = sum(float(m['amount']) for m in period.movements)
+            made_lost = period.end_balance - period.start_balance - net_flows
+            total_made_lost.append(made_lost)
+            cum_sum += made_lost
+            cumulative_nominal.append(cum_sum)
+
         fig, ax = plt.subplots()
-        cum_portfolio = (1 + pd.Series(returns)).cumprod()
-        cum_aor_series = (1 + pd.Series(benchmarks['AOR'])).cumprod()
-        cum_cpi_series = (1 + pd.Series(benchmarks['CPI'])).cumprod()
-        
-        ax.plot(years, cum_portfolio, marker='o', label='Portfolio', linewidth=2)
-        ax.plot(years, cum_aor_series, marker='s', label='AOR ETF', linewidth=2)
-        ax.plot(years, cum_cpi_series, marker='^', label='CPI', linewidth=2)
-        
-        ax.set_title('Cumulative Growth of $1 Investment')
+        x = np.arange(len(years))
+        bar1 = ax.bar(x, total_made_lost, width=0.5, label='Yearly Gain/Loss (Nominal)', color='mediumseagreen')
+        line1 = ax.plot(x, cumulative_nominal, color='navy', marker='o', label='Cumulative (Nominal)')
+
+        # Data labels for bars
+        for bar, val in zip(bar1, total_made_lost):
+            height = bar.get_height()
+            ax.annotate(f'${height:,.0f}',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3 if height >= 0 else -15),
+                        textcoords="offset points",
+                        ha='center', va='bottom' if height >= 0 else 'top', fontsize=8)
+
+        # Data labels for cumulative line
+        for i, val in enumerate(cumulative_nominal):
+            ax.annotate(f'${val:,.0f}',
+                         xy=(x[i], val),
+                         xytext=(0, 8),
+                         textcoords="offset points",
+                         ha='center', va='bottom', fontsize=8, color='navy')
+
+        ax.set_title('Yearly Money Made/Lost (Nominal)')
         ax.set_xlabel('Year')
-        ax.set_ylabel('Value ($)')
-        ax.grid(True)
-        ax.legend()
-        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '${:.2f}'.format(y)))
-        
+        ax.set_ylabel('Amount ($)')
+        ax.set_xticks(x)
+        ax.set_xticklabels(years)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.25))
+
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
             plt.savefig(tmp.name, format='png', dpi=300, bbox_inches='tight')
             plt.close()
             elements.append(Image(tmp.name, width=6*inch, height=4*inch))
             elements.append(Spacer(1, 12))
+
+
 
         # Create summary table
         summary_data = [
@@ -351,5 +468,68 @@ class ModifiedDietzCalculator:
             elements.append(flow_summary)
         else:
             elements.append(Paragraph("No cash movements recorded", styles['Normal']))
-        
+
+        # Figure: Portfolio Value in ZAR (using USD/ZAR year-end rates)
+        year_end_dates = [f"{y}-12-31" for y in years]
+        try:
+            fx_data = yf.download('ZAR=X', start=f"{years[0]}-01-01", end=f"{years[-1]+1}-01-10", interval='1d', progress=False)
+            fx_rates = []
+            for d in year_end_dates:
+                date_obj = pd.to_datetime(d)
+                if d in fx_data.index:
+                    fx_rates.append(float(fx_data.loc[d]['Close']))
+                else:
+                    prev_dates = fx_data.loc[fx_data.index <= date_obj]
+                    if not prev_dates.empty:
+                        fx_rates.append(float(prev_dates.iloc[-1]['Close']))
+                    else:
+                        fx_rates.append(np.nan)
+        except Exception as e:
+            print(f"Warning: Could not fetch USD/ZAR rates: {e}")
+            fx_rates = [np.nan] * len(years)
+
+        end_balances = [p.end_balance for p in sorted(self.periods, key=lambda x: x.year)]
+        zar_balances = [bal * rate if rate == rate else np.nan for bal, rate in zip(end_balances, fx_rates)]
+
+        fig, ax = plt.subplots()
+        ax.plot(years, [v/1e6 for v in zar_balances], marker='o', color='darkgreen', linewidth=2, label='Portfolio Value (ZAR)')
+        for i, val in enumerate(zar_balances):
+            if val == val:  # not nan
+                ax.annotate(f'R{val/1e6:,.2f}M', xy=(years[i], val/1e6), xytext=(0, 8), textcoords="offset points", ha='center', va='bottom', fontsize=8, color='darkgreen')
+        ax.set_title('Portfolio Value in ZAR (Year-End)')
+        ax.set_xlabel('Year')
+        ax.set_ylabel('Portfolio Value (ZAR millions)')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            plt.savefig(tmp.name, format='png', dpi=300, bbox_inches='tight')
+            plt.close()
+            elements.append(Image(tmp.name, width=6*inch, height=4*inch))
+            elements.append(Spacer(1, 12))
+
+        # Add exchange rate table below the ZAR chart, including USD and ZAR values
+        end_balances = [p.end_balance for p in sorted(self.periods, key=lambda x: x.year)]
+        zar_balances = [bal * rate if rate == rate else None for bal, rate in zip(end_balances, fx_rates)]
+        fx_table_data = [['Year', 'USD/ZAR Rate', 'USD Portfolio Value', 'ZAR Portfolio Value']]
+        for y, rate, usd, zar in zip(years, fx_rates, end_balances, zar_balances):
+            fx_table_data.append([
+                str(y),
+                f'{rate:.4f}' if rate == rate else 'N/A',
+                f'${usd:,.0f}',
+                f'R{zar:,.0f}' if zar is not None else 'N/A'
+            ])
+        fx_table = Table(fx_table_data)
+        fx_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(fx_table)
+        elements.append(Spacer(1, 12))
+
         doc.build(elements)
