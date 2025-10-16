@@ -11,7 +11,10 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 import tempfile
-from fredapi import Fred
+try:
+    from fredapi import Fred
+except Exception:
+    Fred = None
 import numpy as np
 
 @dataclass
@@ -24,7 +27,8 @@ class Period:
 
 class CPIDataFetcher:
     def __init__(self, api_key: Optional[str] = None):
-        self.fred = Fred(api_key) if api_key else None
+        # Initialize FRED client only if fredapi is available
+        self.fred = Fred(api_key) if (api_key and Fred is not None) else None
         # Fallback CPI data if API is not available
         self.fallback_cpi = {
             2020: 0.012,  # 1.2%
@@ -104,23 +108,10 @@ class ModifiedDietzCalculator:
         years = sorted(p.year for p in self.periods)
         start_year, end_year = min(years), max(years)
         cpi_data = self.cpi_fetcher.get_cpi_returns(start_year, end_year)
+        # Only CPI benchmark is returned. AOR/ETF comparisons removed.
         benchmarks = {
             'CPI': [cpi_data.get(year, 0.025) for year in years]
         }
-        try:
-            start_date = f"{start_year}-01-01"
-            end_date = f"{end_year}-12-31"
-            aor = yf.download('AOR', start=start_date, end=end_date, interval='1y', progress=False)
-            if not aor.empty:
-                aor_returns = aor['Adj Close'].pct_change().fillna(0)
-                benchmarks['AOR'] = aor_returns.values.tolist()
-            else:
-                aor_rates = {2021: 0.102, 2022: -0.154, 2023: 0.142, 2024: 0.065}
-                benchmarks['AOR'] = [aor_rates.get(year, 0.07) for year in years]
-        except Exception as e:
-            print(f"Warning: Using fallback data for AOR benchmark: {e}")
-            aor_rates = {2021: 0.102, 2022: -0.154, 2023: 0.142, 2024: 0.065}
-            benchmarks['AOR'] = [aor_rates.get(year, 0.07) for year in years]
         return benchmarks
         # Download USD/ZAR rates for each year-end
         try:
@@ -211,23 +202,10 @@ class ModifiedDietzCalculator:
         years = sorted(p.year for p in self.periods)
         start_year, end_year = min(years), max(years)
         cpi_data = self.cpi_fetcher.get_cpi_returns(start_year, end_year)
+        # Only CPI benchmark is returned.
         benchmarks = {
             'CPI': [cpi_data.get(year, 0.025) for year in years]
         }
-        try:
-            start_date = f"{start_year}-01-01"
-            end_date = f"{end_year}-12-31"
-            aor = yf.download('AOR', start=start_date, end=end_date, interval='1y', progress=False)
-            if not aor.empty:
-                aor_returns = aor['Adj Close'].pct_change().fillna(0)
-                benchmarks['AOR'] = aor_returns.values.tolist()
-            else:
-                aor_rates = {2021: 0.102, 2022: -0.154, 2023: 0.142, 2024: 0.065}
-                benchmarks['AOR'] = [aor_rates.get(year, 0.07) for year in years]
-        except Exception as e:
-            print(f"Warning: Using fallback data for AOR benchmark: {e}")
-            aor_rates = {2021: 0.102, 2022: -0.154, 2023: 0.142, 2024: 0.065}
-            benchmarks['AOR'] = [aor_rates.get(year, 0.07) for year in years]
         return benchmarks
 
     def export_pdf(self, filename: str) -> None:
@@ -251,28 +229,25 @@ class ModifiedDietzCalculator:
 
         # Calculate performance metrics
         cum_return = self.calculate_cumulative()
-        cum_aor = (1 + pd.Series(benchmarks['AOR'])).prod() - 1
         cum_cpi = (1 + pd.Series(benchmarks['CPI'])).prod() - 1
-        
+
         # Calculate annual compound return
         n_years = len(years)
         annual_compound = (1 + cum_return) ** (1/n_years) - 1
-        
-        # Calculate outperformance vs benchmarks
-        outperf_aor = cum_return - cum_aor
+
+        # Calculate outperformance vs CPI
         outperf_cpi = cum_return - cum_cpi
 
-        # Figure 1: Annual Returns Comparison (with data labels)
+        # Figure 1: Annual Returns Comparison (Portfolio vs CPI)
         fig, ax = plt.subplots()
         x = np.arange(len(years))
-        width = 0.25
+        width = 0.35
 
-        bars_portfolio = ax.bar(x - width, returns, width, label='Portfolio', color='royalblue')
-        bars_aor = ax.bar(x, benchmarks['AOR'], width, label='AOR ETF', color='lightcoral')
-        bars_cpi = ax.bar(x + width, benchmarks['CPI'], width, label='CPI', color='lightgreen')
+        bars_portfolio = ax.bar(x - width/2, returns, width, label='Portfolio', color='royalblue')
+        bars_cpi = ax.bar(x + width/2, benchmarks['CPI'], width, label='CPI', color='lightgreen')
 
         # Add data labels
-        for bars in [bars_portfolio, bars_aor, bars_cpi]:
+        for bars in [bars_portfolio, bars_cpi]:
             for bar in bars:
                 height = bar.get_height()
                 ax.annotate(f'{height:.2%}',
@@ -346,14 +321,12 @@ class ModifiedDietzCalculator:
 
 
 
-        # Create summary table
+        # Create summary table (Portfolio vs CPI)
         summary_data = [
-            ['Metric', 'Portfolio', 'AOR ETF', 'CPI'],
-            ['Cumulative Return', f"{cum_return:.2%}", f"{cum_aor:.2%}", f"{cum_cpi:.2%}"],
-            ['Annual Compound Return', f"{annual_compound:.2%}", 
-             f"{((1 + cum_aor) ** (1/n_years) - 1):.2%}", 
-             f"{((1 + cum_cpi) ** (1/n_years) - 1):.2%}"],
-            ['Outperformance', 'N/A', f"{outperf_aor:+.2%}", f"{outperf_cpi:+.2%}"]
+            ['Metric', 'Portfolio', 'CPI'],
+            ['Cumulative Return', f"{cum_return:.2%}", f"{cum_cpi:.2%}"],
+            ['Annual Compound Return', f"{annual_compound:.2%}", f"{((1 + cum_cpi) ** (1/n_years) - 1):.2%}"],
+            ['Outperformance vs CPI', f"{outperf_cpi:+.2%}", '']
         ]
 
         summary_table = Table(summary_data)
@@ -370,18 +343,16 @@ class ModifiedDietzCalculator:
         elements.append(summary_table)
         elements.append(Spacer(1, 12))
 
-        # Create detailed annual returns table
-        data = [['Year', 'Start Balance', 'End Balance', 'Return', 'vs. AOR', 'vs. CPI']]
+        # Create detailed annual returns table (Year, Start, End, Return, vs CPI)
+        data = [['Year', 'Start Balance', 'End Balance', 'Return', 'vs. CPI']]
         
         for i, period in enumerate(sorted(self.periods, key=lambda x: x.year)):
-            vs_aor = period.return_rate - benchmarks['AOR'][i]
             vs_cpi = period.return_rate - benchmarks['CPI'][i]
             data.append([
                 str(period.year),
                 f"${period.start_balance:,.2f}",
                 f"${period.end_balance:,.2f}",
                 f"{period.return_rate:.2%}",
-                f"{vs_aor:+.2%}",
                 f"{vs_cpi:+.2%}"
             ])
 
@@ -470,22 +441,27 @@ class ModifiedDietzCalculator:
             elements.append(Paragraph("No cash movements recorded", styles['Normal']))
 
         # Figure: Portfolio Value in ZAR (using USD/ZAR year-end rates)
-        year_end_dates = [f"{y}-12-31" for y in years]
-        try:
-            fx_data = yf.download('ZAR=X', start=f"{years[0]}-01-01", end=f"{years[-1]+1}-01-10", interval='1d', progress=False)
-            fx_rates = []
-            for d in year_end_dates:
-                date_obj = pd.to_datetime(d)
-                if d in fx_data.index:
-                    fx_rates.append(float(fx_data.loc[d]['Close']))
-                else:
-                    prev_dates = fx_data.loc[fx_data.index <= date_obj]
-                    if not prev_dates.empty:
-                        fx_rates.append(float(prev_dates.iloc[-1]['Close']))
+        # Figure: Portfolio Value in ZAR (using USD/ZAR year-end rates)
+        year_end_dates = [pd.to_datetime(f"{y}-12-31") for y in years]
+        fx_rates = []
+        if 'yf' in globals() and yf is not None:
+            try:
+                # Download daily FX data covering the range and pick last available price on or before each year-end
+                fx_data = yf.download('ZAR=X', start=f"{years[0]}-01-01", end=f"{years[-1]+1}-01-10", interval='1d', progress=False, auto_adjust=False)
+                if fx_data is None or fx_data.empty:
+                    raise Exception('empty fx data')
+                fx_data.index = pd.to_datetime(fx_data.index)
+                for date_obj in year_end_dates:
+                    prev = fx_data.loc[fx_data.index <= date_obj]
+                    if not prev.empty:
+                        fx_rates.append(float(prev['Close'].iloc[-1]))
                     else:
                         fx_rates.append(np.nan)
-        except Exception as e:
-            print(f"Warning: Could not fetch USD/ZAR rates: {e}")
+            except Exception as e:
+                print(f"Warning: Could not fetch USD/ZAR rates from yfinance: {e}")
+                fx_rates = [np.nan] * len(years)
+        else:
+            print("Warning: yfinance not available; using fallback FX rates")
             fx_rates = [np.nan] * len(years)
 
         end_balances = [p.end_balance for p in sorted(self.periods, key=lambda x: x.year)]

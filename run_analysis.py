@@ -3,7 +3,7 @@ from modified_dietz import ModifiedDietzCalculator
 def main():
     # Create calculator instance
     calc = ModifiedDietzCalculator()
-    
+
     # Add 2021 data
     calc.add_period(
         year=2021,
@@ -15,7 +15,7 @@ def main():
             {'date': '2021-02-07', 'amount': 1600000}
         ]
     )
-    
+
     # Add 2022 data
     calc.add_period(
         year=2022,
@@ -23,7 +23,7 @@ def main():
         end=9946421,
         movements=[]
     )
-    
+
     # Add 2023 data
     calc.add_period(
         year=2023,
@@ -34,7 +34,7 @@ def main():
             {'date': '2023-04-17', 'amount': -500000}
         ]
     )
-    
+
     # Add 2024 data
     calc.add_period(
         year=2024,
@@ -46,13 +46,12 @@ def main():
             {'date': '2024-10-21', 'amount': 12467465}
         ]
     )
-    
 
-    # Add 2025 data
+    # Add 2025 data (updated to Sept 2025)
     calc.add_period(
         year=2025,
         start=26706398.00,
-        end=35001066.00,
+        end=37148990.42,  # Updated: 36,719,531 + 429,459.42
         movements=[
             {'date': '2025-01-02', 'amount': 5091500.00},
             {'date': '2025-05-15', 'amount': -200000.00},
