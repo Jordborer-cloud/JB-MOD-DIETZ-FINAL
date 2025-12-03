@@ -51,11 +51,12 @@ def main():
     calc.add_period(
         year=2025,
         start=26706398.00,
-        end=37148990.42,  # Updated: 36,719,531 + 429,459.42
+        end=38021500.00,  # Updated final value for 2025
         movements=[
             {'date': '2025-01-02', 'amount': 5091500.00},
             {'date': '2025-05-15', 'amount': -200000.00},
-            {'date': '2025-05-25', 'amount': 1589454.00}
+            {'date': '2025-05-25', 'amount': 1589454.00},
+            {'date': '2025-11-01', 'amount': -150000.00}  # Withdrawal on Nov 1, 2025
         ]
     )
 
